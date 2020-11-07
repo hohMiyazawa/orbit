@@ -48,6 +48,30 @@ const defaults = {
 	}
 }
 
+class Time{
+	constructor(seconds){
+		this.time = seconds
+	}
+	get seconds(){
+		return this.time
+	}
+	get minutes(){
+		return this.time/60
+	}
+	get hours(){
+		return this.time/3600
+	}
+	get days(){
+		return this.time/86400
+	}
+	get years(){
+		return this.time/(365.25*86400)
+	}
+	valueOf(){
+		return this.time
+	}
+}
+
 class Vector{
 	constructor(x,y,z){
 		this.x = x;
@@ -149,7 +173,7 @@ class System{
 			|| this.GM / Math.pow(this.radius,2)
 	}
 	get period(){
-		return this.properties.period
+		return new Time(this.properties.period)
 	}
 	get surfaceEscape(){
 		return Math.sqrt(2*this.GM/this.radius)
@@ -451,13 +475,7 @@ class Orbit{
 		if(this.highPrecision.hasOwnProperty("period")){
 			period = this.highPrecision.period
 		}
-		return {
-			"minutes": period/60,
-			"hours": period/3600,
-			"days": period/86400,
-			"years": period/(365.25*86400),
-			"valueOf": function(){return period}
-		}
+		return new Time(period)
 	}
 	get T(){
 		return this.period
@@ -807,6 +825,29 @@ class Orbit{
 			"valueOf": function(){return Math.hypot(velocity.radial,circularOrbit.vela - velocity.tangential)}
 		}
 	}
+	static synodic(first,second){
+		let t1;
+		let t2;
+		if(first instanceof System){
+			t1 = first.orbit.period
+		}
+		else if(first instanceof Orbit){
+			t1 = first.period
+		}
+		else{
+			t1 = first
+		}
+		if(second instanceof System){
+			t2 = second.orbit.period
+		}
+		else if(second instanceof Orbit){
+			t2 = second.period
+		}
+		else{
+			t2 = second
+		}
+		return new Time(Math.abs(1/(1/t1 - 1/t2)))
+	}
 }
 
 [
@@ -1093,7 +1134,19 @@ class Orbit{
 				"temperature": -112,
 				"pressure": 0.0000266*101325
 			}
-		]
+		],
+		composition: [
+			["CO2",0.965],
+			["N2",0.035],
+			["SO2",0.000150],
+			["Ar",0.000070],
+			["H2O",0.000020],
+			["CO",0.000017],
+			["He",0.000012],
+			["Ne",0.000007],
+			["HCl",0.00000035],
+			["HF",0.000000003]
+		].map(e => ({component: e[0],amount: e[1]}))
 	},
 	orbit: {
 		system: "Sun",
@@ -1248,7 +1301,8 @@ class Orbit{
 	type: "gas planet",
 	GM: 5.793939e15,
 	orbit: {
-		system: "Sun"
+		system: "Sun",
+		period: 30687.153*86400
 	}
 },
 {
@@ -1257,7 +1311,8 @@ class Orbit{
 	GM: 6.836529e15,
 	satellites: ["Triton"],
 	orbit: {
-		system: "Sun"
+		system: "Sun",
+		period: 60190.03*86400
 	}
 },
 {
