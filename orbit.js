@@ -93,6 +93,21 @@ class Vector{
 	}
 }
 
+class Transfer{
+	constructor(properties){
+		this.orbits = properties.orbits;
+		this.burns = properties.burns;
+		this.times = properties.times;
+		this.name = properties.name || ""
+	}
+	get cost(){
+		return this.burns.reduce((acc,val) => acc + val,0)
+	}
+	valueOf(){
+		return this.cost
+	}
+}
+
 let systems = new Map();
 
 class System{
@@ -630,20 +645,27 @@ class Orbit{
 		let anomaly2 = orbit2.relativeNodeLine(orbit1);
 		let distance1 = orbit1.radius(anomaly1);
 		let distance2 = orbit2.radius(anomaly2);
-		let intermediate = new Orbit(Math.min(distance1,distance2),Math.max(distance1,distance2));
+		let relativeInclination = orbit1.relativeInclination(orbit2);
+
+		let intermediate1 = new Orbit({
+			system: orbit1.system,
+			periapsis: Math.min(distance1,distance2),
+			apoapsis: Math.max(distance1,distance2)
+		});
+
 		let vel1 = orbit1.velocity(distance1);
 		let vel2 = orbit2.velocity(distance2);
-		let relativeInclination = orbit1.relativeInclination(orbit2);
+
 		let angle1Cost = angle => {
 			let firstTransfer = Math.hypot(
 				vel1.radial,
-				Math.cos(angle) * intermediate.velocity(distance1) - vel1.tangential,
-				Math.sin(angle) * intermediate.velocity(distance1)
+				Math.cos(angle) * intermediate1.velocity(distance1) - vel1.tangential,
+				Math.sin(angle) * intermediate1.velocity(distance1)
 			)
 			let secondTransfer = Math.hypot(
 				vel2.radial,
-				Math.cos(relativeInclination - angle) * intermediate.velocity(distance2) - vel2.tangential,
-				Math.sin(relativeInclination - angle) * intermediate.velocity(distance2)
+				Math.cos(relativeInclination - angle) * intermediate1.velocity(distance2) - vel2.tangential,
+				Math.sin(relativeInclination - angle) * intermediate1.velocity(distance2)
 			);
 			return firstTransfer + secondTransfer
 		}
@@ -658,19 +680,23 @@ class Orbit{
 		anomaly2 += Math.PI;
 		distance1 = orbit1.radius(anomaly1);
 		distance2 = orbit2.radius(anomaly2);
-		intermediate = new Orbit(Math.min(distance1,distance2),Math.max(distance1,distance2));
+		let intermediate2 = new Orbit({
+			system: orbit1.system,
+			periapsis: Math.min(distance1,distance2),
+			apoapsis: Math.max(distance1,distance2)
+		});
 		vel1 = orbit1.velocity(distance1);
 		vel2 = orbit2.velocity(distance2);
 		let angle2Cost = angle => {
 			let firstTransfer2 = Math.hypot(
 				vel1.radial,
-				Math.cos(angle) * intermediate.velocity(distance1) - vel1.tangential,
-				Math.sin(angle) * intermediate.velocity(distance1)
+				Math.cos(angle) * intermediate2.velocity(distance1) - vel1.tangential,
+				Math.sin(angle) * intermediate2.velocity(distance1)
 			)
 			let secondTransfer2 = Math.hypot(
 				vel2.radial,
-				Math.cos(relativeInclination - angle) * intermediate.velocity(distance2) - vel2.tangential,
-				Math.sin(relativeInclination - angle) * intermediate.velocity(distance2)
+				Math.cos(relativeInclination - angle) * intermediate2.velocity(distance2) - vel2.tangential,
+				Math.sin(relativeInclination - angle) * intermediate2.velocity(distance2)
 			)
 			return firstTransfer2 + secondTransfer2
 		}
@@ -680,9 +706,21 @@ class Orbit{
 			relativeInclination,
 			20
 		);
-		console.log(relativeInclination,gamma,gamma2);
 		let transferCost2 = angle2Cost(gamma2);
-		return Math.min(transferCost,transferCost2)
+		if(transferCost < transferCost2){
+			return new Transfer({
+				name: "plane-split",
+				burns: [transferCost],
+				orbits: [intermediate1]
+			})
+		}
+		else{
+			return new Transfer({
+				name: "plane-split",
+				burns: [transferCost2],
+				orbits: [intermediate2]
+			})
+		}
 	}
 	planeSplit(orbit){
 		return Orbit.planeSplit(this,orbit)
@@ -693,11 +731,12 @@ class Orbit{
 				[orbit1,orbit2] = [orbit2,orbit1]
 			};
 			let transfer = new Orbit(orbit1,orbit2);
-			return {
-				"orbit": transfer,
-				"time": transfer.period/2,
-				"valueOf": function(){return transfer.velP - transfer.circular(orbit1) + transfer.circular(orbit2) - transfer.velA}
-			}
+			return new Transfer({
+				name: "hohmann",
+				orbits: [transfer],
+				times:  [transfer.period/2],
+				burns:  [transfer.velP - transfer.circular(orbit1),transfer.circular(orbit2) - transfer.velA]
+			})
 		}
 		else if((typeof orbit1 !== "number") && (typeof orbit2 !== "number")){
 			if(orbit1.system.name !== orbit2.system.name){
@@ -720,23 +759,24 @@ class Orbit{
 				periapsis: orbit1.a,
 				apoapsis: orbit2.a
 			});
-			return {
-				"orbit": transfer,
-				"time": transfer.period/2,
-				"valueOf": function(){return transfer.velP - transfer.circular(orbit1.a) + transfer.circular(orbit2.a) - transfer.velA}
-			}
+			return new Transfer({
+				name: "hohmann",
+				orbits: [transfer],
+				times: [transfer.period/2],
+				burns: [transfer.velP - transfer.circular(orbit1.a),transfer.circular(orbit2.a) - transfer.velA]
+			})
 		}
 		else{
 			if(typeof orbit1 === "number"){
 				orbit1 = new Orbit({
 					system: orbit2.system,
-					periapsis: orbit1
+					radius: orbit1
 				})
 			}
 			else{
 				orbit2 = new Orbit({
 					system: orbit1.system,
-					periapsis: orbit2
+					radius: orbit2
 				})
 			}
 			return Orbit.hohmann(orbit1,orbit2)
@@ -746,7 +786,11 @@ class Orbit{
 		return Orbit.hohmann(this,orbit)
 	}
 	static biElliptic(orbit1,orbit2){
-		return orbit1.escapeCost + orbit2.escapeCost
+		return new Transfer({
+			name: "bi-elliptic",
+			orbits: [],
+			burns: [orbit1.escapeCost,orbit2.escapeCost]
+		})
 	}
 	biElliptic(orbit){
 		return Orbit.biElliptic(this,orbit)
@@ -759,17 +803,15 @@ class Orbit{
 	}
 	static transfer(orbit1,orbit2){
 		if(orbit1.system.name !== orbit2.system.name){
+			console.warn("patched conics transfer not implemented");
 			return null;
 		}
-		let bestType = "bi-elliptic";
-		let bestCost = 0;
-		bestCost = Orbit.biElliptic(orbit1,orbit2);
+		let best = Orbit.biElliptic(orbit1,orbit2);
 		let splitPlaneCost = orbit1.planeSplit(orbit2);
-		if(splitPlaneCost < bestCost){
-			bestType = "plane-split";
-			bestCost = splitPlaneCost
+		if(splitPlaneCost < best){
+			best = splitPlaneCost
 		}
-		return bestCost;
+		return best
 	}
 	transfer(orbit){
 		return Orbit.transfer(this,orbit)
