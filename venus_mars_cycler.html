@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<script src="orbit.js"></script>
+</head>
+<body>
+<script>
+var getVelocity = function(periapsis,apoapsis,radius){
+	return Math.sqrt(2/radius - 2/(apoapsis + periapsis));
+};
+
+var getCompotentVelocity = function(periapsis,apoapsis,radius){
+	let vel = Math.sqrt(2/radius - 2/(apoapsis + periapsis));
+	let innerProduct = periapsis * getVelocity(periapsis,apoapsis,periapsis);
+	let vh = innerProduct/radius;
+	let vv = Math.sqrt(vel*vel - vh*vh);
+	return {vv: vv, vh: vh};
+};
+
+var getPeriod = function(periapsis,apoapsis){
+	var semi = (apoapsis + periapsis)/2;
+	return Math.sqrt(semi*semi*semi);
+};
+var getTurningAngle = function(periapsis,velocity,mu){
+	return -2*Math.asin(-1/(1 + periapsis*velocity*velocity/mu));
+};
+var getArgument = function(periapsis,apoapsis,radius){
+	var progress = (radius - periapsis)/(apoapsis-periapsis);
+	return Math.acos((progress * (apoapsis + periapsis) - periapsis)/radius);
+};
+var apsisFromState = function(components,radius){
+	var energy = (components.vv*components.vv + components.vh*components.vh)/2 - 1/radius;
+	var apo = (-1/energy + Math.sqrt(1/(energy*energy) + 2*components.vh*components.vh*radius*radius/energy))/2;
+	var peri = (-1/energy - Math.sqrt(1/(energy*energy) + 2*components.vh*components.vh*radius*radius/energy))/2;
+	var progress = (radius - peri)/(apo-peri);
+	var angle = Math.acos((progress * (apo + peri) - peri)/radius);
+	return {
+		apoapsis:apo,
+		periapsis:peri,
+		argument:getArgument(peri,apo,radius)
+	};
+};
+var transformVector = function(vector,angle){
+	return {
+		vh: Math.cos(angle)*vector.vh - Math.sin(angle)*vector.vv,
+		vv: Math.sin(angle)*vector.vh + Math.cos(angle)*vector.vv
+	};
+};
+
+let venus_mars_synodic               = 1/(1/venus.orbit.period - 1/mars.orbit.period);
+let four_synodic_periods_angle_shift = (6 - 4*venus_mars_synodic/venus.orbit.period)*2*Math.PI
+let ideal_transfer_time              = venus.orbit.period * (2 - four_synodic_periods_angle_shift/(2*Math.PI));
+let transfer = new Orbit({
+	system:    sun,
+	periapsis: venus.orbit.a * 0.995327,
+	apoapsis:  mars.orbit.a*1.0377
+});
+
+console.log("ideal transfer time",ideal_transfer_time/86400);
+console.log("ideal shift angle",four_synodic_periods_angle_shift);
+console.log("real transfer time",(transfer.period - 2*transfer.inner(venus.orbit.a).time)/86400);
+console.log("real shift angle",transfer.inner(venus.orbit.a).angle*2);
+</script>
+</body>
+</html>

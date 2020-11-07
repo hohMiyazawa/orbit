@@ -1,0 +1,258 @@
+<!DOCTYPE HTML>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <link href="../css/main.css" rel="stylesheet" type="text/css">
+    <link rel="icon" type="image/png" href="/favicon-16x16.png" sizes="16x16">
+    <link rel="icon" type="image/png" href="/favicon-32x32.png" sizes="32x32">
+    <link rel="icon" type="image/png" href="/favicon-96x96.png" sizes="96x96">
+    <link rel="icon" type="image/svg+xml" href="favicon.svg"><!--animated svg icon in Firefox, ignored in other browsers-->
+  </head>
+  <body>
+    <div class="wrapper" id="main">
+      <div>
+        <canvas id="orbdraw" width="1000" height="1000"></canvas>
+        <div display="inline">
+        </div>
+      </div>
+    </div>
+    <script>
+var canvas = document.getElementById("orbdraw");
+var ctx = canvas.getContext("2d");
+const drawScale = 300;
+const axis = {
+	venus: 0.723332,
+	earth: 1,
+	mars:1.523679
+};
+const synodic = 1/(1/Math.pow(axis.earth,3/2) - 1/Math.pow(axis.mars,3/2) );
+var drawEllipse = function(periapsis,apoapsis,periarg){
+	ctx.beginPath();
+	const semiMajor = (apoapsis+periapsis)/2;
+	const semiMinor = Math.sqrt(semiMajor*semiMajor - (semiMajor - periapsis)*(semiMajor - periapsis));
+	ctx.ellipse(
+		(periapsis-semiMajor)*Math.cos(periarg)*drawScale,
+		-(periapsis-semiMajor)*Math.sin(periarg)*drawScale,
+		semiMajor*drawScale,
+		semiMinor*drawScale,
+		-periarg,0,2*Math.PI
+	);
+	ctx.stroke();
+};
+var drawCircle = function(radius){
+	ctx.beginPath();
+	ctx.arc(0,0,radius*drawScale,0,2*Math.PI);
+	ctx.stroke();
+};
+var getVelocity = function(periapsis,apoapsis,radius){
+	return Math.sqrt(2/radius - 2/(apoapsis + periapsis));
+};
+
+var getCompotentVelocity = function(periapsis,apoapsis,radius){
+	let vel = Math.sqrt(2/radius - 2/(apoapsis + periapsis));
+	let innerProduct = periapsis * getVelocity(periapsis,apoapsis,periapsis);
+	let vh = innerProduct/radius;
+	let vv = Math.sqrt(vel*vel - vh*vh);
+	return {vv: vv, vh: vh};
+};
+
+var getPeriod = function(periapsis,apoapsis){
+	var semi = (apoapsis + periapsis)/2;
+	return Math.sqrt(semi*semi*semi);
+};
+var getOuter = function(periapsis,apoapsis,radius){
+	var grunn = (apoapsis + periapsis)*(radius - periapsis)/(apoapsis - periapsis) - periapsis;
+	var semi = (apoapsis + periapsis)/2;
+	var grunnSkarp = grunn + periapsis - semi;
+	var area = 2*Math.PI*semi*semi;
+	var sector = area * Math.acos(grunnSkarp/semi)/(2*Math.PI);
+	var height = Math.sqrt(semi*semi - grunnSkarp*grunnSkarp);
+	var triangle = height*(semi - periapsis)/2;
+	var velocity = Math.sqrt(2/radius - 1/semi);
+	var vh = Math.sqrt(2/periapsis - 1/semi)*periapsis/radius;
+	var vv = Math.sqrt(velocity*velocity - vh*vh);
+	return {
+		angle: Math.acos(grunn/radius),
+		time: Math.sqrt(semi*semi*semi)*(triangle + sector)/area,
+		vv: vv,
+		vh: vh
+	};
+};
+var getInner = function(periapsis,apoapsis,radius){
+	var semi = (apoapsis + periapsis)/2;
+	var grunn = semi - (apoapsis + periapsis)*(radius - periapsis)/(apoapsis - periapsis)
+	var area = 2*Math.PI*semi*semi;
+	var sector = area * Math.acos(grunn/semi)/(2*Math.PI);
+	var height = Math.sqrt(semi*semi - grunn*grunn);
+	var triangle = height*(semi - periapsis)/2;
+	var velocity = Math.sqrt(2/radius - 1/semi);
+	var vh = Math.sqrt(2/periapsis - 1/semi)*periapsis/radius;
+	var vv = Math.sqrt(velocity*velocity - vh*vh);
+	return {
+		angle: Math.acos((grunn - semi + periapsis)/radius),
+		time: Math.sqrt(semi*semi*semi)*(sector - triangle)/area,
+		vv: vv,
+		vh: vh
+	};
+};
+var getTurningAngle = function(periapsis,velocity,mu){
+	return -2*Math.asin(-1/(1 + periapsis*velocity*velocity/mu));
+};
+var getArgument = function(periapsis,apoapsis,radius){
+	var progress = (radius - periapsis)/(apoapsis-periapsis);
+	return Math.acos((progress * (apoapsis + periapsis) - periapsis)/radius);
+};
+var apsisFromState = function(components,radius){
+	var energy = (components.vv*components.vv + components.vh*components.vh)/2 - 1/radius;
+	var apo = (-1/energy + Math.sqrt(1/(energy*energy) + 2*components.vh*components.vh*radius*radius/energy))/2;
+	var peri = (-1/energy - Math.sqrt(1/(energy*energy) + 2*components.vh*components.vh*radius*radius/energy))/2;
+	var progress = (radius - peri)/(apo-peri);
+	var angle = Math.acos((progress * (apo + peri) - peri)/radius);
+	return {
+		apoapsis:apo,
+		periapsis:peri,
+		argument:getArgument(peri,apo,radius)
+	};
+};
+var transformVector = function(vector,angle){
+	return {
+		vh: Math.cos(angle)*vector.vh - Math.sin(angle)*vector.vv,
+		vv: Math.sin(angle)*vector.vh + Math.cos(angle)*vector.vv
+	};
+};
+var angleDrawer = function(angle){
+	ctx.beginPath();
+	ctx.moveTo(0,0);
+	ctx.lineTo(1000*Math.cos(angle),-1000*Math.sin(angle));
+	ctx.stroke();
+};
+ctx.transform(1,0,0,1,500,500);
+ctx.strokeStyle = "violet";
+drawCircle(axis.venus);
+ctx.strokeStyle = "blue";
+drawCircle(axis.earth);
+ctx.strokeStyle = "red";
+drawCircle(axis.mars);
+
+var iPer = axis.venus*0.92;
+var iApo = axis.earth*1.002;
+
+//earth
+var earthContext = getOuter(iPer,iApo,axis.earth);
+console.log("econt",earthContext);
+
+
+
+//earth
+
+
+
+
+
+
+
+
+ctx.strokeStyle = "black";
+drawEllipse(iPer,iApo,Math.PI);
+var venusFlyBy = getInner(iPer,iApo,axis.venus);
+console.log("original",venusFlyBy);
+var venusSpeed = getVelocity(axis.venus,axis.venus,axis.venus);
+var venusVinf = Math.sqrt(venusFlyBy.vv*venusFlyBy.vv + Math.pow(venusFlyBy.vh - venusSpeed,2));
+
+
+var turningAngle = getTurningAngle(6226.7e3,venusVinf*29.78e3,3.248e14);
+var vector = {
+	vv: venusFlyBy.vv,
+	vh: venusFlyBy.vh - venusSpeed
+}
+var newVector = transformVector(vector,-turningAngle);
+newVector.vh += venusSpeed;
+console.log("vector",vector);
+console.log("new vector",newVector);
+//console.log("turning angle",180*turningAngle/Math.PI);
+var resultant = apsisFromState({vv:newVector.vv,vh:newVector.vh},axis.venus);
+//var resultant = apsisFromState({vv:venusFlyBy.vv,vh:venusFlyBy.vh},axis.venus)
+console.log("resultant",resultant);
+ctx.strokeStyle = "orange";
+drawEllipse(resultant.periapsis,resultant.apoapsis,venusFlyBy.angle + resultant.argument);
+ctx.strokeStyle = "black";
+var arrival = getOuter(resultant.periapsis,resultant.apoapsis,axis.mars);
+console.log("arrival",arrival);
+//var trueTimeEllapsed = getPeriod(iPer,iApo) + getPeriod(resultant.periapsis,resultant.apoapsis);
+
+var arrivalAngle = (venusFlyBy.angle + resultant.argument + Math.PI - arrival.angle);
+
+//console.log("effective angle:",180*(arrivalAngle - earthContext.angle)/Math.PI - 360 * (timeEllapsed - 1) - 360);
+
+
+var meetAngle = (venusFlyBy.angle + resultant.argument + Math.PI - arrival.angle);
+angleDrawer(meetAngle);
+	ctx.strokeStyle = "red";
+	angleDrawer(venusFlyBy.angle + Math.PI);
+	ctx.strokeStyle = "black";
+	angleDrawer(venusFlyBy.angle + resultant.argument);
+	angleDrawer(venusFlyBy.angle + resultant.argument + Math.PI);
+
+ctx.strokeStyle = "green";
+const stayTime = 0.247017;
+var stayAngle = 2*Math.PI*stayTime/getPeriod(axis.mars,axis.mars);
+drawEllipse(resultant.periapsis,resultant.apoapsis,venusFlyBy.angle + resultant.argument - 2*arrival.angle + stayAngle);
+	ctx.strokeStyle = "black";
+	angleDrawer(venusFlyBy.angle + resultant.argument - 2*arrival.angle + stayAngle);
+	angleDrawer(venusFlyBy.angle + resultant.argument + Math.PI - 2*arrival.angle + stayAngle);
+var timeSinceVenus = getPeriod(resultant.periapsis,resultant.apoapsis) - 2*arrival.time + stayTime;
+console.log("time since venus: (v y)",timeSinceVenus/getPeriod(axis.venus,axis.venus));
+var intention = (2*arrival.angle - stayAngle);
+console.log("venusangle:",(2 - timeSinceVenus/getPeriod(axis.venus,axis.venus))*360,"intention:",180*intention/Math.PI);
+drawEllipse(iPer,iApo,Math.PI - intention);
+var timeEllapsed = getPeriod(iPer,iApo) + getPeriod(resultant.periapsis,resultant.apoapsis) - 2*arrival.time + 2*earthContext.time + stayTime;
+console.log("ellapsed time:",timeEllapsed,"earthAngle:",360*(timeEllapsed-2),"realAngle:",180*(-intention + 2*earthContext.angle)/Math.PI,"diff",(360*(timeEllapsed-2)) - 180*(-intention + 2*earthContext.angle)/Math.PI);
+var marsVinf = Math.sqrt(arrival.vv*arrival.vv + Math.pow(getVelocity(axis.mars,axis.mars,axis.mars) - arrival.vh,2));
+console.log("mars vinf",marsVinf*29.78,"km/s",arrival.vv*29.78,"km/s",29.78*(getVelocity(axis.mars,axis.mars,axis.mars) - arrival.vh),"km/s");
+console.log("theoretical mars-venus vinf",(getVelocity(axis.mars,axis.mars,axis.mars) - getVelocity(axis.venus,axis.mars,axis.mars))*29.78,"km/s");
+console.log("theoretical mars-earth vinf",(getVelocity(axis.mars,axis.mars,axis.mars) - getVelocity(axis.earth,axis.mars,axis.mars))*29.78,"km/s");
+var marsAngle = Math.acos(arrival.vv/marsVinf);
+var marsEccentricity = 1 + 3500e3*Math.pow(marsVinf*29.78e3,2)/4.283e13;
+var circlingVelocity = Math.sqrt(4.283e13/3500e3);
+var breakCost = Math.sqrt(Math.pow(marsVinf*29.78e3,2) + 2*circlingVelocity*circlingVelocity) - Math.sqrt(2)*circlingVelocity;
+var breakCost2 = Math.sqrt(Math.pow((getVelocity(axis.mars,axis.mars,axis.mars) - getVelocity(axis.earth,axis.mars,axis.mars))*29.78e3,2) + 2*circlingVelocity*circlingVelocity) - Math.sqrt(2)*circlingVelocity;
+var breakCost3 = Math.sqrt(Math.pow((getVelocity(axis.mars,axis.mars,axis.mars) - getVelocity(axis.venus,axis.mars,axis.mars))*29.78e3,2) + 2*circlingVelocity*circlingVelocity) - Math.sqrt(2)*circlingVelocity;
+console.log("break cost",breakCost,"break cost all time low",breakCost2,"m-v minimum",breakCost3);
+var marsHalfTurningAngle = -Math.asin(-1/marsEccentricity);
+console.log(180*(marsAngle + marsHalfTurningAngle + stayAngle/2)/Math.PI,"gradar (90 good)");
+/*
+console.log("mars:");
+var aPer = axis.earth*0.95;
+var aApo = axis.mars*1.015;
+ctx.strokeStyle = "black";
+var outDetails = getOuter(aPer,aApo,axis.mars);
+var innDetails = getInner(aPer,aApo,axis.earth);
+var period = getPeriod(aPer,aApo);
+ctx.strokeStyle = "green";
+drawEllipse(aPer,aApo,arrivalAngle - outDetails.angle + Math.PI);
+ctx.strokeStyle = "black";
+drawEllipse(axis.venus,1.5731039554445232,venusFlyBy.angle + resultant.argument);
+console.log(period/2);
+var transferTime = period/2 - outDetails.time + innDetails.time;
+console.log(transferTime);
+console.log(-outDetails.angle + innDetails.angle);
+var marsVinf = Math.sqrt(outDetails.vv*outDetails.vv + Math.pow(getVelocity(axis.mars,axis.mars,axis.mars) - outDetails.vh,2));
+var minimumMarsVinf = getVelocity(axis.mars,axis.mars,axis.mars) - getVelocity(axis.earth,axis.mars,axis.mars);
+console.log("hohmann cost mars-earth:",marsVinf*29.78,minimumMarsVinf*29.78,(marsVinf - minimumMarsVinf)*29.78);
+const LMO = 3450;
+console.log("cost at mars",(Math.sqrt(Math.pow(29.78e3*marsVinf,2) + 2*LMO*LMO) - Math.sqrt(2)*LMO));
+console.log("trailing angle ideal",(getPeriod(axis.earth,axis.mars)/2)*360 - 180);
+console.log("trailing angle now",(transferTime*360 - 180*(-outDetails.angle + innDetails.angle)/Math.PI) - 180);
+*/
+var earthDepVinf = Math.sqrt(earthContext.vv*earthContext.vv + Math.pow(1 - earthContext.vh,2));
+const LEO = 7777;
+console.log("raw cost",(Math.sqrt(Math.pow(29.78e3*earthDepVinf,2) + 2*LEO*LEO) - Math.sqrt(2)*LEO));
+/*
+console.log("normal hohman starts here");
+var hohMannPeriod = getPeriod(axis.earth,axis.mars);
+console.log("time:",hohMannPeriod/2,"angle:",360*hohMannPeriod/2 - 180,"time wait",synodic*(360 - (360*hohMannPeriod/2 - 180)*2)/360);
+*/
+
+    </script>
+  </body>
+</html>

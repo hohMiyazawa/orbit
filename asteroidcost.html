@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html>
+	<head>
+		<meta charset="utf-8">
+		<script src="orbit.js"></script>
+	</head>
+	<body>
+		<div id="input">
+			Apohelion: <input id="apo">
+			Perihelion: <input id="per">
+			Inclination: <input id="inc">
+			Mass: <input id="mass">
+			Radius: <input id="radius">
+			<button onclick="calc()">clc</button>
+		</div>
+		<div id="results"></div>
+		<script>
+let earthOrbit = earth.lowOrbit;
+let escapeVel = earthOrbit.escape(earthOrbit.a);
+
+let results = document.getElementById("results");
+
+[
+	["Ceres",2.9796467093,2.5586835997,10.59406704,9.3835e20,964.4e3,92.61],
+	["Pallas",3.4119,2.1336,34.837,2.01e20,550e3,65],
+	["Vesta",2.57138,2.15221,7.14043,2.59076e20,572.6e3,93.1],
+	["Hygiea",3.4948,2.7882,3.8316,8.32e19,450e3,null],
+	["Interamnia",3.5293,2.5857,	17.309,3.79e19,362e3,null],
+	["Europa",3.417,2.785,	7.466,2.26e19,379e3,null],
+	["Davida",3.756248648,2.57323875,15.942247,3.77e19,357e3,null],
+	["Sylvia",3.768,3.213,10.855,1.478e19,384e3,null],
+	["Eunomia",3.138,2.149,11.738,3.18e19,357e3,null]
+].map(asteroid => {
+	asteroid.res = calc(asteroid[1],asteroid[2],2*Math.PI*asteroid[3]/360,asteroid[4],asteroid[5]/2);
+	return asteroid;
+}).sort(
+	(a,b) => a.res.total - a.res.appVel - (b.res.total - b.res.appVel)
+).forEach(asteroid => {
+	let line = document.createElement("div");
+	res = asteroid.res;
+	line.innerText = asteroid[0] + ": " + [res.total - res.appVel,res.total - asteroid[6],res.esc,res.app - asteroid[6],res.split*180/Math.PI].map(a => a.toPrecision(5)).join("\n");
+	results.appendChild(line)
+})
+
+function calc(apo,per,inc,mass,radius){
+	/*let apo = parseFloat(document.getElementById("apo").value);
+	let per = parseFloat(document.getElementById("per").value);
+	let inc = 2*Math.PI*parseFloat(document.getElementById("inc").value)/360;
+	let mass = parseFloat(document.getElementById("mass").value);
+	let radius = parseFloat(document.getElementById("radius").value);*/
+	let asteroidOrbit = new Orbit({
+		system: sun,
+		apoapsis: apo * earth.orbit.a,	
+		periapsis: per * earth.orbit.a,
+		inclination: inc
+	});
+	/*while(results.lastChild){
+		results.lastChild.remove();
+	};*/
+	let asteroid = new System({
+		mass: mass,
+		radius: radius
+	});
+	let approachVel = asteroid.lowOrbit.escape(asteroid.lowOrbit.a);
+
+	let goods = [];
+
+	for(let i=0;i<=100;i++){
+		let transferOrbit = new Orbit({
+			system: sun,
+			apoapsis: apo * earth.orbit.a,	
+			periapsis: 1 * earth.orbit.a,
+			inclination: inc * i/100
+		})
+		
+		let escapeVinf = Math.hypot(
+			Math.sin(transferOrbit.inclination) * transferOrbit.velP,
+			Math.cos(transferOrbit.inclination) * transferOrbit.velP - earth.orbit.vela
+		)
+		let escapeCost = Math.hypot(escapeVinf,escapeVel) - escapeVel;
+		let approachVinf = Math.hypot(
+			Math.sin(inc - transferOrbit.inclination) * transferOrbit.velA,
+			Math.cos(inc - transferOrbit.inclination) * transferOrbit.velA - asteroidOrbit.velA,
+		);
+		let approachCost = Math.hypot(approachVinf,approachVel);
+		goods.push({esc: escapeCost,app: approachCost,split: inc*i/100,total: escapeCost + approachCost,appVel: approachVel});
+	}
+	return goods.sort((a,b) => a.total - b.total)[0];
+}
+		</script>
+	</body>
+</html>
