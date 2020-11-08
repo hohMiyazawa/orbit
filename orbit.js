@@ -1,5 +1,5 @@
 function roughFloatsAbsolute(float1,float2){
-	return Math.abs(float1 - float2) < 0.0001;
+	return Math.abs(float1 - float2) < 0.00001;
 }
 
 function roughFloatsRelative(float1,float2){
@@ -16,6 +16,14 @@ function roughFloatsAngles(float1,float2){
 		Math.min(reduced1,2*Math.PI - reduced1) + Math.min(reduced2,2*Math.PI - reduced2),
 		0
 	)
+}
+
+function normaliseAngle(angle){
+	let tmp = angle % (2*Math.PI);
+	if(tmp < 0){
+		return tmp + 2*Math.PI
+	}
+	return tmp
 }
 
 function bowlMin(func,low,high,iterations){
@@ -419,6 +427,18 @@ class Orbit{
 			+ this.periapsis * (Math.cos(anomaly) - 1)
 		)
 	}
+	velocityFromAnomaly(anomaly){
+		let distance = this.radius(anomaly);
+		let velocityObject = this.velocity(distance)
+		if(normaliseAngle(anomaly) < Math.PI){
+			return velocityObject
+		}
+		return {
+			"tangential": velocityObject.tangential,
+			"radial": -velocityObject.radial,
+			"valueOf": function(){return velocityObject.valueOf()}
+		}
+	}
 	get altitude(){
 		return this.semiMajor - this.system.radius
 	}
@@ -640,12 +660,122 @@ class Orbit{
 		let angle = Math.acos(Vector.dotProduct(cross,nodeVector)/cross.length);
 		return angle - this.argument
 	}
+	static singleBurn(orbit1,orbit2){
+		if(orbit1.apoapsis < orbit2.periapsis || orbit2.apoapsis < orbit1.periapsis){
+			return null
+		}
+		let relativeInclination = orbit1.relativeInclination(orbit2);
+		if(relativeInclination === 0){
+			//TODO
+		}
+		else{
+			let anomaly1 = normaliseAngle(orbit1.relativeNodeLine(orbit2));
+			let anomaly2 = normaliseAngle(orbit2.relativeNodeLine(orbit1));
+			let distance1a = orbit1.radius(anomaly1);
+			let distance1b = orbit2.radius(anomaly2 + Math.PI);
+			let distance2a = orbit1.radius(anomaly1 + Math.PI);
+			let distance2b = orbit2.radius(anomaly2);
+			let best1 = null;
+			let best2 = null;
+			if(roughFloatsRelative(distance1a,distance1b)){
+				let vel1 = orbit1.velocityFromAnomaly(anomaly1);
+				let vel2 = orbit2.velocityFromAnomaly(anomaly2 + Math.PI);
+				best1 = new Transfer({
+					name: "single-burn",
+					orbits: [],
+					times: [0],
+					burns: [Math.hypot(
+						vel1.radial - vel2.radial,
+						vel1.tangential - vel2.tangential * Math.cos(relativeInclination),
+						Math.sin(relativeInclination)*vel2.tangential
+					)]
+				})
+			}
+			if(roughFloatsRelative(distance2a,distance2b)){
+				let vel1 = orbit1.velocityFromAnomaly(anomaly1 + Math.PI);
+				let vel2 = orbit2.velocityFromAnomaly(anomaly2);
+				best2 = new Transfer({
+					name: "single-burn",
+					orbits: [],
+					times: [0],
+					burns: [Math.hypot(
+						vel1.radial - vel2.radial,
+						vel1.tangential - vel2.tangential * Math.cos(relativeInclination),
+						Math.sin(relativeInclination)*vel2.tangential
+					)]
+				})
+			}
+			if(best2 !== null && best1 !== null && best2 < best1){
+				return best2
+			}
+			return best1 || best2
+		}
+	}
+	static biTouch(orbit1,orbit2){
+		let relativeInclination = orbit1.relativeInclination(orbit2);
+		if(relativeInclination !== 0){
+			return null
+		}
+		let best;
+		let bestIndex = 0;
+		const iterations = 64;
+		let getTransfer = function(anomaly){
+			let distance1 = orbit1.radius(anomaly - orbit1.argument);
+			let distance2 = orbit2.radius(anomaly + Math.PI - orbit2.argument);
+			let vel1 = orbit1.velocityFromAnomaly(anomaly - orbit1.argument);
+			let vel2 = orbit2.velocityFromAnomaly(anomaly + Math.PI - orbit2.argument);
+			let transferOrbit = new Orbit({
+				system: orbit1.system,
+				inclination: orbit1.inclination,
+				periapsis: Math.min(distance1,distance2),
+				apoapsis: Math.max(distance1,distance2),
+				longitude: orbit1.longitude,
+				argument: (distance1 < distance2 ? anomaly : anomaly + Math.PI)
+			})
+			let trans = new Transfer({
+				name: "bi-touch",
+				orbits: [transferOrbit],
+				times: [transferOrbit.period/2],
+				burns: [
+					Math.hypot(vel1.radial,transferOrbit.velocity(distance1) - vel1.tangential),
+					Math.hypot(vel2.radial,transferOrbit.velocity(distance2) - vel2.tangential)
+				]
+			})
+			return trans
+		}
+		for(let i=0;i<iterations;i++){
+			let trans = getTransfer(2*Math.PI*i/iterations);
+			if(!best || best > trans){
+				best = trans;
+				bestIndex = i;
+			}
+		}
+		for(let i=0;i<iterations;i++){
+			let trans = getTransfer(
+				2*Math.PI*(
+					(
+						bestIndex-1 + 2*i/(iterations - 1)
+					)/iterations
+				)
+			);
+			if(!best || best > trans){
+				best = trans;
+			}
+		}
+		return best
+	}
+	biTouch(orbit){
+		return Orbit.biTouch(this,orbit)
+	}
 	static planeSplit(orbit1,orbit2){
 		let anomaly1 = orbit1.relativeNodeLine(orbit2);
 		let anomaly2 = orbit2.relativeNodeLine(orbit1);
 		let distance1 = orbit1.radius(anomaly1);
 		let distance2 = orbit2.radius(anomaly2);
 		let relativeInclination = orbit1.relativeInclination(orbit2);
+		if(relativeInclination === 0){
+			return Orbit.biTouch(orbit1,orbit2)
+		}
 
 		let intermediate1 = new Orbit({
 			system: orbit1.system,
