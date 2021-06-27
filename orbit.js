@@ -216,6 +216,9 @@ class System{
 			radius: Math.cbrt(this.GM/Math.pow(2*Math.PI/this.period,2))
 		})
 	}
+	get color(){
+		return this.properties.color || "#BEBEBE"
+	}
 	get L1(){
 		if(!this.properties.L1){
 			let pivot1 = this.radius.equator;
@@ -553,7 +556,7 @@ class Orbit{
 		let triangle = height*(a - P)/2;
 		return {
 			angle: Math.acos((grunn - a + P)/r),
-			time: this.period*(sector - triangle)/area,
+			time: new Time(this.period*(sector - triangle)/area),
 			velocity: this.velocity(r)
 		};
 	}
@@ -567,7 +570,7 @@ class Orbit{
 		let triangle = height*(semi - periapsis)/2;
 		return {
 			angle: Math.acos(grunn/radius),
-			time: this.period*(triangle + sector)/area,
+			time: new Time(this.period*(triangle + sector)/area),
 			velocity: this.velocity(radius)
 		}
 	}
@@ -719,6 +722,16 @@ class Orbit{
 		let best;
 		let bestIndex = 0;
 		const iterations = 64;
+		if(orbit1.periapsis === orbit1.apoapsis && orbit2.periapsis === orbit2.apoapsis){
+			return Orbit.hohmann(orbit1,orbit2)
+		}
+		else if(orbit1.periapsis === orbit1.apoapsis){
+			if(orbit1.periapsis === orbit2.apoapsis){
+				return Orbit.singleBurn(orbit1,orbit2)
+			}
+		}
+		else if(orbit2.periapsis === orbit2.apoapsis){
+		}
 		let getTransfer = function(anomaly){
 			let distance1 = orbit1.radius(anomaly - orbit1.argument);
 			let distance2 = orbit2.radius(anomaly + Math.PI - orbit2.argument);
@@ -1045,6 +1058,7 @@ class Orbit{
 	volume: 1.41e27,
 	density: 1.408e3,
 	gravity: 274,
+	color: "#FFFF00",
 	satellites: ["Mercury","Venus","Earth","Mars","Ceres","Vesta","Jupiter","Saturn","Uranus","Neptune","Pluto","Eris"]
 },
 {
@@ -1072,6 +1086,7 @@ class Orbit{
 		liquidCore: true,
 		k2: 0.29525
 	},
+	color: "#2f6a69",
 	atmosphere: {
 		height: 100e3,
 		layers:[
@@ -1166,6 +1181,7 @@ class Orbit{
 	geology: {
 		k2: 0.02405
 	},
+	color: "#1F1F1F",
 	orbit: {
 		system: "Earth",
 		apoapsis: 405400e3,
@@ -1188,6 +1204,7 @@ class Orbit{
 	gravity: 3.7,
 	axialTilt: 0.034*(Math.PI/180),
 	period: 58.646 * 86400,
+	color: "#1a1a1a",
 	geology: {
 		k2: 0.451
 	},
@@ -1212,6 +1229,7 @@ class Orbit{
 	geology: {
 		k2: 0.295
 	},
+	color: "#e6e6e6",
 	atmosphere: {
 		layers: [
 			{
@@ -1346,6 +1364,7 @@ class Orbit{
 	geology: {
 		k2: 0.173
 	},
+	color: "#993d00",
 	atmosphere: {
 		layers: [
 			{
@@ -1439,6 +1458,7 @@ class Orbit{
 	period: 9.925 * 3600,
 	axialTilt: 3.13*(Math.PI/180),
 	satelittes: ["Io","Europa","Ganymede","Callisto"],
+	color: "#b07f35",
 	orbit: {
 		system: "Sun",
 		apoapsis: 816.62e9,
@@ -1461,6 +1481,7 @@ class Orbit{
 	geology: {
 		k2: 0.390
 	},
+	color: "#b08f36",
 	orbit: {
 		system: "Sun",
 		semiMajor: 1433.53e9,
@@ -1472,19 +1493,35 @@ class Orbit{
 	name: "Uranus",
 	type: "gas planet",
 	GM: 5.793939e15,
+	color: "#5580aa",
+	radius: 25362e3,
+	radiusPolar: 24973e3,
+	radiusequator: 25559e3,
 	orbit: {
 		system: "Sun",
-		period: 30687.153*86400
+		period: 30687.153*86400,
+		semiMajor: 2875.04e9,
+		periapsis: 2742e9,
+		apoapsis: 3008e9,
+		eccentricity: 0.046381,
+		inclination: 0.773,
+		argument: 96.998857
 	}
 },
 {
 	name: "Neptune",
 	type: "gas planet",
 	GM: 6.836529e15,
+	radius: 24622e3,
 	satellites: ["Triton"],
+	color: "#366896",
 	orbit: {
 		system: "Sun",
-		period: 60190.03*86400
+		period: 60190.03*86400,
+		periapsis: 4459500000000,
+		apoapsis: 4537300000000,
+		semiMajor: 4504400000000,
+		eccentricity: 0.009456,
 	}
 },
 {
@@ -1583,12 +1620,14 @@ class Orbit{
 	name: "Titan",
 	type: "moon",
 	radius: 2574.73e3,
+	mass: 1.3452e23,
 	tidalLock: true,
 	geology: {},
 	orbit: {
 		system: "Saturn",
 		semiMajor: 1221870e3,
-		eccentricity: 0.0288
+		eccentricity: 0.0288,
+		inclination: 0.34854,
 	}
 },
 {
@@ -1643,6 +1682,7 @@ class Orbit{
 	name: "Ariel",
 	type: "moon",
 	radius: 578.9e3,
+	mass: 1.353e21,
 	tidalLock: true,
 	geology: {},
 	orbit: {
@@ -1655,6 +1695,7 @@ class Orbit{
 	name: "Umbriel",
 	type: "moon",
 	radius: 584.7e3,
+	mass: 1.172e21,
 	tidalLock: true,
 	geology: {},
 	orbit: {
@@ -1667,6 +1708,7 @@ class Orbit{
 	name: "Titania",
 	type: "moon",
 	radius: 788.4e3,
+	mass: 3.527e21,
 	tidalLock: true,
 	geology: {},
 	orbit: {
@@ -1679,6 +1721,7 @@ class Orbit{
 	name: "Oberon",
 	type: "moon",
 	radius: 761.4e3,
+	mass: 3.014e21,
 	tidalLock: true,
 	geology: {},
 	orbit: {
@@ -1691,6 +1734,7 @@ class Orbit{
 	name: "Miranda",
 	type: "moon",
 	radius: 235.8e3,
+	mass: 6.59e19,
 	tidalLock: true,
 	geology: {},
 	orbit: {
@@ -1703,6 +1747,7 @@ class Orbit{
 	name: "Triton",
 	type: "moon",
 	radius: 1353.4e3,
+	mass: 2.14e22,
 	tidalLock: true,
 	geology: {},
 	orbit: {
