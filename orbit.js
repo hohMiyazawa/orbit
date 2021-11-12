@@ -1080,7 +1080,8 @@ class Orbit{
 		system: "Sun",
 		apoapsis: 152100000e3,
 		periapsis: 147095000e3,
-		eccentricity: 0.0167086
+		eccentricity: 0.0167086,
+		period: 31558149.7635
 	},
 	geology: {
 		liquidCore: true,
@@ -1411,7 +1412,12 @@ class Orbit{
 	name: "Deimos",
 	type: "moon",
 	orbit: {
-		system: "Mars"
+		system: "Mars",
+		periapsis: 23455.5e3,
+		apoapsis: 23470.9e3,
+		semiMajor: 23463.2e3,
+		eccentricity: 0.00033,
+		period: 109123.2
 	}
 },
 {
