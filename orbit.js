@@ -50,6 +50,67 @@ const constants = {
 	c: 299792458
 }
 
+let brok = function(num){
+	if(num <= 0){
+		if(num === 0){
+			return [[0, 1, 0]]
+		}
+		return brok(-num).map(a => [-a[0],a[1],a[2]])
+	}
+	if(num >= 1){
+		if(num === 1){
+			return [[1, 1, 0]]
+		}
+		return brok(num % 1).map(a => [a[0] + a[1] * Math.trunc(num),a[1],a[2]])
+	}
+	let fracs = [];
+	let lim1_a = 0;
+	let lim1_b = 1;
+	let lim2_a = 1;
+	let lim2_b = 1;
+	for(let i=0;i<1000;i++){
+		if(lim1_a/lim1_b === num){
+			fracs.push([lim1_a, lim1_b, 0]);
+			return fracs
+		}
+		if(lim2_a/lim2_b === num){
+			fracs.push([lim2_a, lim2_b, 0]);
+			return fracs
+		}
+		let lowerDiff = num - lim1_a/lim1_b;
+		let upperDiff = lim2_a/lim2_b - num;
+		if(lowerDiff < upperDiff){
+			if(
+				!fracs.length
+				|| fracs[fracs.length-1][0] !== lim1_a
+				|| fracs[fracs.length-1][1] !== lim1_b
+			){
+				fracs.push([lim1_a, lim1_b, -lowerDiff])
+			}
+		}
+		else{
+			if(
+				!fracs.length
+				|| fracs[fracs.length-1][0] !== lim2_a
+				|| fracs[fracs.length-1][1] !== lim2_b
+			){
+				fracs.push([lim2_a, lim2_b, upperDiff])
+			}
+		}
+		let lim3_a = lim1_a + lim2_a;
+		let lim3_b = lim1_b + lim2_b;
+		if(lim3_a/lim3_b > num){
+			lim2_a = lim3_a;
+			lim2_b = lim3_b;
+		}
+		else{
+			lim1_a = lim3_a;
+			lim1_b = lim3_b;
+		}
+	}
+	return fracs
+}
+
 const defaults = {
 	geology: {
 		k2: 0.2
@@ -549,30 +610,18 @@ class Orbit{
 	}
 	inner(r){
 		let a = this.a;let P = this.P;let A = this.A;
-		let grunn = a - (A + P)*(r - P)/(A - P)
-		let area = 2*Math.PI*a*a;
-		let sector = area * Math.acos(grunn/a)/(2*Math.PI);
-		let height = Math.sqrt(a*a- grunn*grunn);
+		//let grunn = a - (A + P)*(r - P)/(A - P);
+		let grunn = (A + P)*(r - P)/(A - P);
+		//grunn / (A + P) = (r - P)(A - P)
+		let area = Math.PI*a*a;
+		let sector = area * Math.acos((a - grunn)/a)/(2*Math.PI);
+		let height = Math.sqrt(a*a - Math.pow(grunn - a,2));
 		let triangle = height*(a - P)/2;
 		return {
-			angle: Math.acos((grunn - a + P)/r),
+			angle: Math.acos((grunn - P)/r),
 			time: new Time(this.period*(sector - triangle)/area),
 			velocity: this.velocity(r)
 		};
-	}
-	outer(radius){
-		let semi = this.a;let periapsis = this.P;let apoapsis = this.A;
-		let grunn = (apoapsis + periapsis)*(radius - periapsis)/(apoapsis - periapsis) - periapsis;
-		let grunnSkarp = grunn + periapsis - semi;
-		let area = 2*Math.PI*semi*semi;
-		let sector = area * Math.acos(grunnSkarp/semi)/(2*Math.PI);
-		let height = Math.sqrt(semi*semi - grunnSkarp*grunnSkarp);
-		let triangle = height*(semi - periapsis)/2;
-		return {
-			angle: Math.acos(grunn/radius),
-			time: new Time(this.period*(triangle + sector)/area),
-			velocity: this.velocity(radius)
-		}
 	}
 	static vectorsToOrbit(system,position,velocity){
 		if(typeof system === "string"){
@@ -1367,6 +1416,7 @@ class Orbit{
 	},
 	color: "#993d00",
 	atmosphere: {
+		height: 100000,
 		layers: [
 			{
 				"name": "troposphere",
