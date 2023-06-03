@@ -47,7 +47,13 @@ const constants = {
 	boltzmann: 1.380649e-23,
 	stefanBoltzmann: 5.670374419e-8,
 	AU: 149597870700,
-	c: 299792458
+	c: 299792458,
+	parsec: 648000*149597870700/Math.PI,
+	lightyear: 299792458 * 86400,
+}
+
+function tisserand(orb1,orb2){
+	return orb2.a/orb1.a + 2 * Math.cos(orb1.relativeInclination(orb2)) * Math.sqrt(orb1.a/orb2.a * (1 - Math.pow(orb1.e,2)))
 }
 
 let brok = function(num){
@@ -160,6 +166,12 @@ class Vector{
 	static dotProduct(vec1,vec2){
 		return vec1.x * vec2.x + vec1.y * vec2.y + vec1.z * vec2.z
 	}
+	dotProduct(vec){
+		return Vector.dotProduct(this,vec)
+	}
+	static cos_theta(vec1,vec2){
+		return vec1.dotProduct(vec2) / (vec1.length * vec2.length)
+	}
 }
 
 class Transfer{
@@ -191,6 +203,9 @@ class System{
 	}
 	get geology(){
 		return this.properties.geology
+	}
+	get name(){
+		return this.properties.name
 	}
 	get GM(){
 		return this.properties.GM || (this.properties.mass || Math.pow(this.radius,3)*4*Math.PI/3 * 2000) * constants.gravity
@@ -252,24 +267,21 @@ class System{
 		return this.properties.density
 			|| this.mass / this.volume
 	}
-	get gravity(){
-		return this.properties.gravity
-			|| this.GM / Math.pow(this.radius,2)
-	}
 	get period(){
 		return new Time(this.properties.period)
 	}
+	get surfaceGravity(){
+		return this.properties.gravity
+			|| this.GM / Math.pow(this.radius,2)
+	}
 	get surfaceEscape(){
 		return Math.sqrt(2*this.GM/this.radius)
-	}
-	get surfaceVelocity(){
-		return Math.PI*this.diameter/this.period
 	}
 	get tidalLock(){
 		return this.properties.tidalLock === true
 	}
 	get satellites(){
-		return (this.properties.satellites || []).map(e => systems.get(e) || e)
+		return this.properties.satellites || []
 	}
 	get stationaryOrbit(){
 		return new Orbit({
@@ -336,11 +348,51 @@ class System{
 			radius: radius
 		})
 	}
+	surfaceVelocity(latDeg){
+		if(!this.period){
+			return 0
+		}
+		if(latDeg !== undefined){
+			if(latDeg > 90 || latDeg < -90){
+				throw "lattitude over 90 degrees!"
+			}
+			return Math.PI*this.diameter.equator*Math.cos(Math.PI*latDeg/180)/this.period
+		}
+		else{
+			return Math.PI*this.diameter.equator/this.period
+		}
+	}
 	turningAngle(periapsis,velocity){
 		return -2*Math.asin(-1/(1 + periapsis*Math.pow(velocity,2)/this.GM))
 	}
 	gravity(r){
 		return this.GM/(r*r)
+	}
+	localRadius(latDeg,lonDeg){
+		let rad = this.radius;
+		if(latDeg !== undefined){
+			if(latDeg > 90 || latDeg < -90){
+				throw "lattitude over 90 degrees!"
+			}
+			return rad.polar * Math.abs(latDeg)/90 + rad.equator * (90 - Math.abs(latDeg))/90;
+		}
+		return this.radius
+	}
+	localGravity(latDeg,lonDeg,altitude){
+		altitude = altitude || 0;
+		if(latDeg !== undefined){
+			if(latDeg > 90 || latDeg < -90){
+				throw "lattitude over 90 degrees!"
+			}
+			if(this.properties.gravityModel){
+				return this.properties.gravityModel(latDeg,lonDeg,altitude)
+			}
+			let lrad = this.localRadius(latDeg,lonDeg);
+			let g_comp = this.gravity(lrad + altitude);
+			let v_comp = ((this.surfaceVelocity(latDeg) * (lrad+altitude)/lrad)**2)/(lrad+altitude);
+			return Math.hypot(g_comp - Math.cos(Math.PI*latDeg/180)*v_comp,Math.sin(Math.PI*latDeg/180)*v_comp)
+		}
+		return this.gravity(this.radius + altitude)
 	}
 	toString(){
 		return this.properties.name || "unnamed"
@@ -618,7 +670,7 @@ class Orbit{
 		let height = Math.sqrt(a*a - Math.pow(grunn - a,2));
 		let triangle = height*(a - P)/2;
 		return {
-			angle: Math.acos((grunn - P)/r),
+			angle: Math.PI - Math.acos((grunn - P)/r),
 			time: new Time(this.period*(sector - triangle)/area),
 			velocity: this.velocity(r)
 		};
@@ -644,6 +696,24 @@ class Orbit{
 		let radius = Math.hypot(position.x,position.y,position.z);
 		let velMagnitude = Math.hypot(velocity.x,velocity.y,velocity.z);
 		let energy = Math.pow(velMagnitude,2)/2 - system.GM/radius;
+		let a = - 1 /(velMagnitude * velMagnitude / system.GM - 2/radius);
+		let velTan = velMagnitude * Math.sqrt(1 - Math.pow(Vector.cos_theta(new Vector(position.x,position.y,position.z), new Vector(velocity.x,velocity.y,velocity.z)),2));
+/*
+v^2 = mu * (2/r - 1/a)
+v^2 / mu= 2/r - 1/a
+v^2 / mu - 2/r = - 1/a
+-(v^2 / mu - 2/r) = 1/a
+a = -1 / (v^2 / mu - 2/r) 
+
+
+vp^2 = mu * (2/P - 1/a)
+(v*r/P)^2 = mu * (2/P - 1/a)
+
+*/
+
+		let P = (a*system.GM - Math.sqrt(a*a * system.GM*system.GM - a * system.GM * radius * radius * velTan * velTan))/system.GM;
+		let orbit = new Orbit({system: system, periapsis: P, apoapsis: 2*a - P});
+		return orbit;
 	}
 	get planeVector(){
 		const mag = Math.sin(this.inclination);
@@ -994,16 +1064,24 @@ class Orbit{
 		return Orbit.nodeToNode(orbit)
 	}
 	static transfer(orbit1,orbit2){
-		if(orbit1.system.name !== orbit2.system.name){
-			console.warn("patched conics transfer not implemented");
-			return null;
+		if(orbit1.system.properties.name !== orbit2.system.properties.name){
+			if(orbit1.system.orbit.system.properties.name == orbit2.system.orbit.system.properties.name){
+				let interplanetary = orbit1.system.orbit.planeSplit(orbit2.system.orbit);
+				console.log(interplanetary);
+			}
+			else{
+				console.warn("patched conics transfer not implemented");
+				return null;
+			}
 		}
-		let best = Orbit.biElliptic(orbit1,orbit2);
-		let splitPlaneCost = orbit1.planeSplit(orbit2);
-		if(splitPlaneCost < best){
-			best = splitPlaneCost
+		else{
+			let best = Orbit.biElliptic(orbit1,orbit2);
+			let splitPlaneCost = orbit1.planeSplit(orbit2);
+			if(splitPlaneCost < best){
+				best = splitPlaneCost
+			}
+			return best
 		}
-		return best
 	}
 	transfer(orbit){
 		return Orbit.transfer(this,orbit)
@@ -1084,6 +1162,43 @@ class Orbit{
 	}
 }
 
+function createAstronomicalObject(thing,parent){
+	if(typeof thing === "string"){
+		thing = {
+			name: thing,
+		}
+		/*if(parent){
+			thing.orbit = {parent: parent.name}
+		}*/
+	}
+	let system = new System(thing);
+	if(thing.orbit){
+		try{
+			thing.orbit = new Orbit(thing.orbit)
+		}
+		catch(e){
+			if(e === "invalid orbit"){
+				console.log("orbit of",thing.name,"failed checks");
+			}
+			else{
+				console.log("unknown error for orbit of",thing.name);
+			}
+			throw "orbit error"
+		}
+	}
+	if(thing.atmosphere){
+		thing.atmosphere = new Atmosphere(thing.atmosphere);
+	}
+	if(thing.geology){
+		thing.geology = new Geology(thing.geology,system);
+	}
+	systems.set(system.name,system);
+	if(thing.satellites){
+		thing.satellites = thing.satellites.map(sat => createAstronomicalObject(sat,parent))
+	}
+	return system;
+}
+
 [
 {
 	name: "UNIT",
@@ -1108,8 +1223,7 @@ class Orbit{
 	density: 1.408e3,
 	gravity: 274,
 	color: "#FFFF00",
-	satellites: ["Mercury","Venus","Earth","Mars","Ceres","Vesta","Jupiter","Saturn","Uranus","Neptune","Pluto","Eris"]
-},
+	satellites: [
 {
 	name: "Earth",
 	type: "terrestrial planet",
@@ -1123,8 +1237,45 @@ class Orbit{
 	area: 510072000e6,
 	gravity: 9.807,
 	period: 0.99726968 * 86400,
+	axialTilt: 23.4392811*(Math.PI/180),
+	axialTiltEcliptic: 23.4392811*(Math.PI/180),
+	axialTiltParent: 23.4392811*(Math.PI/180),
 	lowOrbitAltitude: 200e3,
-	satellites: ["Moon"],
+	satellites:[
+		{
+			name: "Moon",
+			type: "moon",
+			GM: 4.9048695e12,
+			mass: 7.342e22,
+			radius: 1737.1e3,
+			radiusPolar: 1736.0e3,
+			radiusEquator: 1738.1e3,
+			volume: 2.1958e19,
+			density: 3.344e3,
+			area: 3.793e13,
+			gravity: 1.62,
+			axialTilt: 6.687*(Math.PI/180),
+			axialTiltEcliptic: 1.5424*(Math.PI/180),
+			axialTiltParent: 24*(Math.PI/180),
+			period: 27.321661*86400,
+			tidalLock: true,
+			geology: {
+				k2: 0.02405
+			},
+			color: "#1F1F1F",
+			albedo: 0.11,
+			albedoGeo: 0.12,
+			orbit: {
+				system: "Earth",
+				apoapsis: 405400e3,
+				periapsis: 362600e3,
+				semiMajor: 384399e3,
+				eccentricity: 0.0549,
+				period: 27.321661*86400,
+				inclination: 5.145*(Math.PI/180)
+			}
+		},
+	],
 	orbit: {
 		system: "Sun",
 		apoapsis: 152100000e3,
@@ -1137,6 +1288,8 @@ class Orbit{
 		k2: 0.29525
 	},
 	color: "#2f6a69",
+	albedo: 0.306,
+	albedoGeo: 0.434,
 	atmosphere: {
 		height: 100e3,
 		layers:[
@@ -1212,37 +1365,6 @@ class Orbit{
 	}
 },
 {
-	name: "Moon",
-	type: "moon",
-	GM: 4.9048695e12,
-	mass: 7.342e22,
-	radius: 1737.1e3,
-	radiusPolar: 1736.0e3,
-	radiusEquator: 1738.1e3,
-	volume: 2.1958e19,
-	density: 3.344e3,
-	area: 3.793e13,
-	gravity: 1.62,
-	axialTilt: 6.687*(Math.PI/180),
-	axialTiltEcliptic: 1.5424*(Math.PI/180),
-	axialTiltParent: 24*(Math.PI/180),
-	period: 27.321661*86400,
-	tidalLock: true,
-	geology: {
-		k2: 0.02405
-	},
-	color: "#1F1F1F",
-	orbit: {
-		system: "Earth",
-		apoapsis: 405400e3,
-		periapsis: 362600e3,
-		semiMajor: 384399e3,
-		eccentricity: 0.0549,
-		period: 27.321661*86400,
-		inclination: 5.145*(Math.PI/180)
-	}
-},
-{
 	name: "Mercury",
 	type: "terrestrial planet",
 	GM: 2.2032e13,
@@ -1255,6 +1377,8 @@ class Orbit{
 	axialTilt: 0.034*(Math.PI/180),
 	period: 58.646 * 86400,
 	color: "#1a1a1a",
+	albedo: 0.088,
+	albedoGeo: 0.142,
 	geology: {
 		k2: 0.451
 	},
@@ -1277,9 +1401,12 @@ class Orbit{
 	radius: 6051.8e3,
 	period: -243.025 * 86400,
 	geology: {
+		liquidCore: true,
 		k2: 0.295
 	},
 	color: "#e6e6e6",
+	albedo: 0.76,
+	albedoGeo: 0.689,
 	atmosphere: {
 		layers: [
 			{
@@ -1375,6 +1502,7 @@ class Orbit{
 				"pressure": 0.0000266*101325
 			}
 		],
+		height: 220000,
 		composition: [
 			["CO2",0.965],
 			["N2",0.035],
@@ -1408,13 +1536,45 @@ class Orbit{
 	density: 3.9335e3,
 	area: 144798500e6,
 	gravity: 3.72076,
+	lowOrbitAltitude: 200e3,
 	axialTilt: 25.19*(Math.PI/180),
+	axial_asc: 317.68143*(Math.PI/180),
+	axial_dec: 52.88650*(Math.PI/180),
 	period: 1.025957*86400,
-	satellites: ["Phobos","Deimos"],
+	satellites: [
+		{
+			name: "Phobos",
+			type: "moon",
+			radius: 11.2667e3,
+			axis: [27e3,22e3,18e3],
+			orbit: {
+				system: "Mars",
+				periapsis: 9234.42e3,
+				apoapsis: 9517.58e3,
+				semiMajor: 9376e3,
+				eccentricity: 0.0151
+			}
+		},
+		{
+			name: "Deimos",
+			type: "moon",
+			orbit: {
+				system: "Mars",
+				periapsis: 23455.5e3,
+				apoapsis: 23470.9e3,
+				semiMajor: 23463.2e3,
+				eccentricity: 0.00033,
+				period: 109123.2
+			}
+		}
+	],
 	geology: {
+		liquidCore: true,
 		k2: 0.173
 	},
 	color: "#993d00",
+	albedo: 0.25,
+	albedoGeo: 0.17,
 	atmosphere: {
 		height: 100000,
 		layers: [
@@ -1446,31 +1606,6 @@ class Orbit{
 	}
 },
 {
-	name: "Phobos",
-	type: "moon",
-	radius: 11.2667e3,
-	axis: [27e3,22e3,18e3],
-	orbit: {
-		system: "Mars",
-		periapsis: 9234.42e3,
-		apoapsis: 9517.58e3,
-		semiMajor: 9376e3,
-		eccentricity: 0.0151
-	}
-},
-{
-	name: "Deimos",
-	type: "moon",
-	orbit: {
-		system: "Mars",
-		periapsis: 23455.5e3,
-		apoapsis: 23470.9e3,
-		semiMajor: 23463.2e3,
-		eccentricity: 0.00033,
-		period: 109123.2
-	}
-},
-{
 	name: "Ceres",
 	type: "dwarf planet",
 	period: 9.074170 * 3600,
@@ -1479,7 +1614,6 @@ class Orbit{
 	mass: 9.3835e20,
 	area: 2770000e6,
 	density: 2.162e3,
-	
 	orbit: {
 		system: "Sun",
 		apoapsis: 445749000e3,
@@ -1513,8 +1647,160 @@ class Orbit{
 	gravity: 24.79,
 	period: 9.925 * 3600,
 	axialTilt: 3.13*(Math.PI/180),
-	satelittes: ["Io","Europa","Ganymede","Callisto"],
+	satellites: [
+		{
+			name: "Metis",
+			type: "moon",
+			radius: 21.5e3,
+			axis: [60e3,40e3,34e3],
+			mass: 3.6e16,
+			orbit: {
+				system: "Jupiter",
+				semiMajor: 128000e3
+			}
+		},
+		{
+			name: "Adrastea",
+			type: "moon",
+			radius: 8.2e3,
+			axis: [20e3,16e3,14e3],
+			mass: 0.2e16,
+			orbit: {
+				system: "Jupiter",
+				semiMajor: 129000e3
+			}
+		},
+		{
+			name: "Amalthea",
+			type: "moon",
+			radius: 83.5e3,
+			axis: [250e3,146e3,128e3],
+			mass: 208e16,
+			orbit: {
+				system: "Jupiter",
+				semiMajor: 181400e3
+			}
+		},
+		{
+			name: "Thebe",
+			type: "moon",
+			radius: 49.3e3,
+			axis: [116e3,98e3,84e3],
+			mass: 43e16,
+			orbit: {
+				system: "Jupiter",
+				semiMajor: 221900e3
+			}
+		},
+		{
+			name: "Io",
+			type: "moon",
+			mass: 8.931938e22,
+			radius: 1821.6e3,
+			tidalLock: true,
+			geology: {
+				k2: 0.015
+			},
+			orbit: {
+				system: "Jupiter",
+				apoapsis: 423400e3,
+				periapsis: 420000e3,
+				semiMajor: 423400e3,
+				eccentricity: 0.0041
+			}
+		},
+		{
+			name: "Europa",
+			type: "moon",
+			mass: 4.799844e22,
+			radius: 1560.8e3,
+			tidalLock: true,
+			axialTilt: 0.1*(Math.PI/180),
+			geology: {},
+			orbit: {
+				system: "Jupiter",
+				semiMajor: 670900e3,
+				eccentricity: 0.009
+			}
+		},
+		{
+			name: "Ganymede",
+			type: "moon",
+			mass: 1.4819e23,
+			radius: 2634.1e3,
+			tidalLock: true,
+			geology: {},
+			orbit: {
+				system: "Jupiter",
+				semiMajor: 1070400e3,
+				eccentricity: 0.0013
+			}
+		},
+		{
+			name: "Callisto",
+			type: "moon",
+			radius: 2410.3e3,
+			tidalLock: true,
+			geology: {},
+			orbit: {
+				system: "Jupiter",
+				semiMajor: 1882700e3,
+				eccentricity: 0.0074
+			}
+		},
+		"Themisto",
+		"Leda",
+		"Ersa",
+		"Himalia",
+		"Pandia",
+		"Lysithea",
+		"Elara",
+		"Dia",
+		"Carpo",
+		"Valetudo",
+		"Euporie",
+		"Eupheme",
+		"Mneme",
+		"Euanthe",
+		"Harpalyke",
+		"Orthosie",
+		"Helike",
+		"Praxidike",
+		"Thelxinoe",
+		"Thyone",
+		"Ananke",
+		"Iocaste",
+		"Hermippe",
+		"Philoprosyne",
+		"Pasithee",
+		"Eurydome",
+		"Chaldene",
+		"Isonoe",
+		"Kallichore",
+		"Erinome",
+		"Kale",
+		"Eirene",
+		"Aitne",
+		"Eukelade",
+		"Arche",
+		"Taygete",
+		"Carme",
+		"Herse",
+		"kalyke",
+		"Hegemone",
+		"Pasiphae",
+		"Sponde",
+		"Megaclite",
+		"Cyllene",
+		"Sinope",
+		"Aoede",
+		"Autonoe",
+		"Callirrhoe",
+		"Kore"
+	],
 	color: "#b07f35",
+	albedo: 0.503,
+	albedoGeo: 0.538,
 	orbit: {
 		system: "Sun",
 		apoapsis: 816.62e9,
@@ -1533,11 +1819,183 @@ class Orbit{
 	radius: 58232e3,
 	radiusPolar: 54364e3,
 	radiusEquator: 60268e3,
-	satellites: ["Titan"],
+	satellites: [
+		"Pan",
+		"Daphnis",
+		"Atlas",
+		"Prometheus",
+		"Pandora",
+		"Epimetheus",
+		{
+			name: "Janus",
+			type: "moon",
+			mass: 1897.5e15,
+			orbit: {
+				system: "Saturn",
+				semiMajor: 151472e3,
+			}
+		},
+		"Aegaeon",
+		{
+			name: "Mimas",
+			type: "moon",
+			radius: 198.2e3,
+			mass: 37493e15,
+			tidalLock: true,
+			geology: {},
+			orbit: {
+				system: "Saturn",
+				semiMajor: 185539e3,
+				eccentricity: 0.0196
+			}
+		},
+		"Methone",
+		"Anthe",
+		"Pallene",
+		{
+			name: "Enceladus",
+			type: "moon",
+			radius: 252.1e3,
+			mass: 108022e15,
+			tidalLock: true,
+			geology: {},
+			orbit: {
+				system: "Saturn",
+				semiMajor: 237948e3,
+				eccentricity: 0.0047
+			}
+		},
+		{
+			name: "Tethys",
+			type: "moon",
+			radius: 531.1e3,
+			mass: 617449e15,
+			tidalLock: true,
+			geology: {},
+			orbit: {
+				system: "Saturn",
+				semiMajor: 294619e3,
+				eccentricity: 0.0001
+			}
+		},
+		"Calypso",
+		"Telesto",
+		"Polydeuces",
+		{
+			name: "Dione",
+			type: "moon",
+			radius: 561.4e3,
+			mass: 1095452e15,
+			tidalLock: true,
+			geology: {},
+			orbit: {
+				system: "Saturn",
+				semiMajor: 377396e3,
+				eccentricity: 0.0022
+			}
+		},
+		"Helene",
+		{
+			name: "Rhea",
+			type: "moon",
+			mass: 2.305518e21,
+			radius: 763.8e3,
+			tidalLock: true,
+			geology: {},
+			orbit: {
+				system: "Saturn",
+				semiMajor: 527108e3,
+				eccentricity: 0.0012583
+			}
+		},
+		{
+			name: "Titan",
+			type: "moon",
+			radius: 2574.73e3,
+			mass: 1.3452e23,
+			tidalLock: true,
+			geology: {},
+			atmosphere: {
+				layers: [],
+				height: 1200000
+			},
+			orbit: {
+				system: "Saturn",
+				semiMajor: 1221870e3,
+				eccentricity: 0.0288,
+				inclination: 0.34854,
+			}
+		},
+		{
+			name: "Hyperion",
+			type: "moon",
+			mass: 5619.9e15,
+			orbit: {
+				system: "Saturn",
+				semiMajor: 1481010e3,
+				eccentricity: 0.1230
+			}
+		},
+		{
+			name: "Iapetus",
+			type: "moon",
+			mass: 1.805635e21,
+			radius: 734.5e3,
+			tidalLock: true,
+			geology: {},
+			orbit: {
+				system: "Saturn",
+				semiMajor: 3560820e3,
+				eccentricity: 0.0276812
+			}
+		},
+		"Kiviuq",
+		"Ijiraq",
+		"Phoebe",
+		"Paaliaq",
+		"Skathi",
+		"Albiorix",
+		"Bebhionn",
+		"Erriapus",
+		"Skoll",
+		"Tarqeq",
+		"Shiarnaq",
+		"Tarvos",
+		"Hyrrokkin",
+		"Greip",
+		"Mundilfari",
+		"Gridr",
+		"Bergelmir",
+		"Jarnsaxa",
+		"Narvi",
+		"Suttungr",
+		"Hati",
+		"Eggther",
+		"Farbauti",
+		"Thrymr",
+		"Bestia",
+		"Angrboda",
+		"Aegir",
+		"Beli",
+		"Gerd",
+		"Gunnlod",
+		"Skrymir",
+		"Alvaldi",
+		"Kari",
+		"Geirrod",
+		"Fenrir",
+		"Surtur",
+		"Loge",
+		"Ymir",
+		"Thiazzi",
+		"Fornjot",
+	],
 	geology: {
 		k2: 0.390
 	},
 	color: "#b08f36",
+	albedo: 0.342,
+	albedoGeo: 0.499,
 	orbit: {
 		system: "Sun",
 		semiMajor: 1433.53e9,
@@ -1550,9 +2008,100 @@ class Orbit{
 	type: "gas planet",
 	GM: 5.793939e15,
 	color: "#5580aa",
+	albedo: 0.300,
+	albedoGeo: 0.488,
 	radius: 25362e3,
 	radiusPolar: 24973e3,
 	radiusequator: 25559e3,
+	satellites: [
+		"Cordelia",
+		"Ophelia",
+		"Bianca",
+		"Cressida",
+		"Desdemona",
+		"Juliet",
+		"Portia",
+		"Rosalind",
+		"Cupid",
+		"Belinda",
+		"Perdita",
+		"Puck",
+		"Mab",
+		{
+			name: "Miranda",
+			type: "moon",
+			radius: 235.8e3,
+			mass: 6.59e19,
+			tidalLock: true,
+			geology: {},
+			orbit: {
+				system: "Uranus",
+				semiMajor: 129390e3,
+				eccentricity: 0.0013
+			}
+		},
+		{
+			name: "Ariel",
+			type: "moon",
+			radius: 578.9e3,
+			mass: 1.353e21,
+			tidalLock: true,
+			geology: {},
+			orbit: {
+				system: "Uranus",
+				semiMajor: 191020e3,
+				eccentricity: 0.0012
+			}
+		},
+		{
+			name: "Umbriel",
+			type: "moon",
+			radius: 584.7e3,
+			mass: 1.172e21,
+			tidalLock: true,
+			geology: {},
+			orbit: {
+				system: "Uranus",
+				semiMajor: 266000e3,
+				eccentricity: 0.0039
+			}
+		},
+		{
+			name: "Titania",
+			type: "moon",
+			radius: 788.4e3,
+			mass: 3.527e21,
+			tidalLock: true,
+			geology: {},
+			orbit: {
+				system: "Uranus",
+				semiMajor: 435910e3,
+				eccentricity: 0.0011
+			}
+		},
+		{
+			name: "Oberon",
+			type: "moon",
+			radius: 761.4e3,
+			mass: 3.014e21,
+			tidalLock: true,
+			geology: {},
+			orbit: {
+				system: "Uranus",
+				semiMajor: 583520e3,
+				eccentricity: 0.0014
+			}
+		},
+		"Francisco",
+		"Caliban",
+		"Stephano",
+		"Trinculo",
+		"Sycorax",
+		"Margaret",
+		"Prospero",
+		"Setebos",
+		"Ferdinand",
+	],
 	orbit: {
 		system: "Sun",
 		period: 30687.153*86400,
@@ -1569,8 +2118,37 @@ class Orbit{
 	type: "gas planet",
 	GM: 6.836529e15,
 	radius: 24622e3,
-	satellites: ["Triton"],
+	satellites: [
+		"Naiad",
+		"Thalassa",
+		"Despina",
+		"Galatea",
+		"Larissa",
+		"Hippocamp",
+		"Proteus",
+		{
+			name: "Triton",
+			type: "moon",
+			radius: 1353.4e3,
+			mass: 2.14e22,
+			tidalLock: true,
+			geology: {},
+			orbit: {
+				system: "Neptune",
+				semiMajor: 354759e3,
+				eccentricity: 0.000016
+			}
+		},
+		"Nereid",
+		"Halimede",
+		"Sao",
+		"Laomedeia",
+		"Psamathe",
+		"Neso",
+	],
 	color: "#366896",
+	albedo: 0.290,
+	albedoGeo: 0.442,
 	orbit: {
 		system: "Sun",
 		period: 60190.03*86400,
@@ -1614,226 +2192,14 @@ class Orbit{
 	type: "dwarf planet",
 	GM: 1.108e12,
 	orbit: {
-		system: "Sun"
-	}
-},
-{
-	name: "Io",
-	type: "moon",
-	mass: 8.931938e22,
-	radius: 1821.6e3,
-	tidalLock: true,
-	geology: {
-		k2: 0.015
-	},
-	orbit: {
-		system: "Jupiter",
-		apoapsis: 423400e3,
-		periapsis: 420000e3,
-		semiMajor: 423400e3,
-		eccentricity: 0.0041
-	}
-},
-{
-	name: "Europa",
-	type: "moon",
-	mass: 4.799844e22,
-	radius: 1560.8e3,
-	tidalLock: true,
-	geology: {},
-	orbit: {
-		system: "Jupiter",
-		semiMajor: 670900e3,
-		eccentricity: 0.009
-	}
-},
-{
-	name: "Ganymede",
-	type: "moon",
-	mass: 1.4819e23,
-	radius: 2634.1e3,
-	tidalLock: true,
-	geology: {},
-	orbit: {
-		system: "Jupiter",
-		semiMajor: 1070400e3,
-		eccentricity: 0.0013
-	}
-},
-{
-	name: "Callisto",
-	type: "moon",
-	radius: 2410.3e3,
-	tidalLock: true,
-	geology: {},
-	orbit: {
-		system: "Jupiter",
-		semiMajor: 1882700e3,
-		eccentricity: 0.0074
-	}
-},
-{
-	name: "Titan",
-	type: "moon",
-	radius: 2574.73e3,
-	mass: 1.3452e23,
-	tidalLock: true,
-	geology: {},
-	orbit: {
-		system: "Saturn",
-		semiMajor: 1221870e3,
-		eccentricity: 0.0288,
-		inclination: 0.34854,
-	}
-},
-{
-	name: "Enceladus",
-	type: "moon",
-	radius: 252.1e3,
-	tidalLock: true,
-	geology: {},
-	orbit: {
-		system: "Saturn",
-		semiMajor: 237948e3,
-		eccentricity: 0.0047
-	}
-},
-{
-	name: "Mimas",
-	type: "moon",
-	radius: 198.2e3,
-	tidalLock: true,
-	geology: {},
-	orbit: {
-		system: "Saturn",
-		semiMajor: 185539e3,
-		eccentricity: 0.0196
-	}
-},
-{
-	name: "Tethys",
-	type: "moon",
-	radius: 531.1e3,
-	tidalLock: true,
-	geology: {},
-	orbit: {
-		system: "Saturn",
-		semiMajor: 294619e3,
-		eccentricity: 0.0001
-	}
-},
-{
-	name: "Dione",
-	type: "moon",
-	radius: 561.4e3,
-	tidalLock: true,
-	geology: {},
-	orbit: {
-		system: "Saturn",
-		semiMajor: 377396e3,
-		eccentricity: 0.0022
-	}
-},
-{
-	name: "Ariel",
-	type: "moon",
-	radius: 578.9e3,
-	mass: 1.353e21,
-	tidalLock: true,
-	geology: {},
-	orbit: {
-		system: "Uranus",
-		semiMajor: 191020e3,
-		eccentricity: 0.0012
-	}
-},
-{
-	name: "Umbriel",
-	type: "moon",
-	radius: 584.7e3,
-	mass: 1.172e21,
-	tidalLock: true,
-	geology: {},
-	orbit: {
-		system: "Uranus",
-		semiMajor: 266000e3,
-		eccentricity: 0.0039
-	}
-},
-{
-	name: "Titania",
-	type: "moon",
-	radius: 788.4e3,
-	mass: 3.527e21,
-	tidalLock: true,
-	geology: {},
-	orbit: {
-		system: "Uranus",
-		semiMajor: 435910e3,
-		eccentricity: 0.0011
-	}
-},
-{
-	name: "Oberon",
-	type: "moon",
-	radius: 761.4e3,
-	mass: 3.014e21,
-	tidalLock: true,
-	geology: {},
-	orbit: {
-		system: "Uranus",
-		semiMajor: 583520e3,
-		eccentricity: 0.0014
-	}
-},
-{
-	name: "Miranda",
-	type: "moon",
-	radius: 235.8e3,
-	mass: 6.59e19,
-	tidalLock: true,
-	geology: {},
-	orbit: {
-		system: "Uranus",
-		semiMajor: 129390e3,
-		eccentricity: 0.0013
-	}
-},
-{
-	name: "Triton",
-	type: "moon",
-	radius: 1353.4e3,
-	mass: 2.14e22,
-	tidalLock: true,
-	geology: {},
-	orbit: {
-		system: "Neptune",
-		semiMajor: 354759e3,
-		eccentricity: 0.000016
+		system: "Sun",
+		apoapsis: 14.579e12,
+		periapsis: 5.725e12
 	}
 }
-].forEach(thing => {
-	let system = new System(thing);
-	if(thing.orbit){
-		try{
-			thing.orbit = new Orbit(thing.orbit)
-		}
-		catch(e){
-			if(e === "invalid orbit"){
-				console.log("orbit of",thing.name,"failed checks");
-			}
-			else{
-				console.log("unknown error for orbit of",thing.name);
-			}
-			throw "orbit error"
-		}
-	}
-	if(thing.atmosphere){
-		thing.atmosphere = new Atmosphere(thing.atmosphere);
-	}
-	thing.geology = new Geology(thing.geology,system);
-	systems.set(thing.name,system);
-});
+	]
+},
+].forEach(createAstronomicalObject);
 
 let earth = systems.get("Earth");
 let moon = systems.get("Moon");
@@ -1914,6 +2280,22 @@ let yuriMoon = function(system,distance){
 	let mu2 = system.GM;
 	let mu1 = system.orbit.system.GM;
 	return integral(angular,semiMajor,mu1,mu2,distance) - integral(angular,semiMajor,mu1,mu2,surface)
+}
+
+let asteroid_return = function(start_rad,peri){
+	let marsPass = new Orbit({system: sun,apoapsis: start_rad, periapsis: peri}).inner(mars.orbit.a).velocity;
+	let vinfinity = Math.hypot(marsPass.tangential - mars.orbit.vela, marsPass.radial);
+	let turning = mars.turningAngle(mars.radius + 150000, vinfinity);
+	let entryAngle = Math.acos(marsPass.radial/vinfinity);
+	let exitAngle = entryAngle - turning;
+	let v_t = Math.sin(exitAngle) * vinfinity + mars.orbit.vela;
+	let v_r = - Math.cos(exitAngle) * vinfinity;
+	let ret = Orbit.vectorsToOrbit(sun,[mars.orbit.a,0,0],[v_r,v_t,0]);
+
+	console.log("burn1: ",- new Orbit({system: sun,apoapsis: start_rad, periapsis: peri}).velA + new Orbit({system: sun,apoapsis: start_rad, periapsis: start_rad}).velA);
+	console.log("burn2: ",- new Orbit({system: sun,apoapsis: start_rad, periapsis: earth.orbit.a}).velA + new Orbit({system: sun,apoapsis: start_rad, periapsis: start_rad}).velA	);
+
+	return ret;
 }
 /*
 
